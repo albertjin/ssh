@@ -22,6 +22,7 @@ type Channel struct {
 	efun func(os.Error)
 	out  func([]byte)
 	err  func([]byte)
+	onclose func()
 	client *Client
 	pending []byte
 }
@@ -29,6 +30,7 @@ type Channel struct {
 const (
 	chsSpawnCOpen = 1 << iota
 	chsReady      = 1 << iota
+	chsClosed     = 1 << iota
 )
 
 func startClientLoop(c *Client) {
@@ -60,7 +62,10 @@ func cloop(c *Client) {
 				v.Out = os.Stdout
 			}
 			if v.Err == nil {
-				v.Out = os.Stderr
+				v.Err = os.Stderr
+			}
+			if v.OnClose == nil {
+				v.OnClose = func() {}
 			}
 			ch := cmd.Channel
 			ch.local_id     = c.lids
@@ -68,6 +73,7 @@ func cloop(c *Client) {
 			ch.efun         = v.Efun
 			ch.out          = func(bs []byte) { v.Out.Write(bs) }
 			ch.err          = func(bs []byte) { v.Err.Write(bs) }
+			ch.onclose      = v.OnClose
 			c.lids++
 			c.chs[ch.local_id] = ch
 			writePacket(c.ssh, func(p*bigendian.Printer){
@@ -102,7 +108,24 @@ func dopacket(c *Client, b []byte) {
 		bigendian.NewParser(b).Byte(&code).U32(&lcid).U32(&wadj).End()
 		x := c.chs[lcid]
 		x.remote_window += wadj
+	case msgChannelClose:
+		var lcid uint32
+		bigendian.NewParser(b).Byte(&code).U32(&lcid).End()
+		x := c.chs[lcid]
+		c.chs[lcid] = nil,false
+		if x.state!=chsClosed {
+			x.state = chsClosed
+			x.onclose()
+			writePacket(c.ssh, func(p*bigendian.Printer) {
+				p.Byte(msgChannelClose).U32(x.remote_id)
+			})
+		}
+	case msgChannelEof:
+		Log(5, "Ignoring msgChannelEof")
+	case msgChannelRequest:
+		Log(5, "Ignoring msgChannelRequest")
 	case msgChannelSuccess:
+		Log(5, "Ignoring msgChannelSuccess")
 	case msgChannelFailure:
 		var lcid uint32
 		bigendian.NewParser(b).Byte(&code).U32(&lcid).End()
@@ -158,6 +181,7 @@ func dopacket(c *Client, b []byte) {
 			panic("dopacket: unknown command type")
 		}
 	default:
+		Log(0,"Packet %d %X",b[0],b)
 		panic("dopacket: Unknown packet")
 	}
 }
@@ -194,6 +218,7 @@ type Spawn struct {
 	Out,Err io.WriteCloser
 	Efun func(os.Error)
 	NoTTY bool
+	OnClose func()
 }
 
 type Packet struct {

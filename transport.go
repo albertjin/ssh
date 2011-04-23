@@ -73,10 +73,10 @@ func readPacket(c *ssh) ([]byte, os.Error) {
 		return nil,err
 	}
 	
-	Log(9,"WIRE = %X\n",b)
+	Log(9,"WIRE = %X",b)
 	// decrypt header
 	c.rc.CryptBlocks(b,b)
-	Log(9,"DEC  = %X\n",b)
+	Log(9,"DEC  = %X",b)
 
 	lfield   := int(bigendian.U32(b))
 	lpadding := int(b[4])
