@@ -6,7 +6,7 @@ type C struct {
 	User string
 	Host string
 	HostKeyFun  func([]byte)os.Error
-	PasswordFun func()string
+	PasswordFun func()(string,os.Error)
 }
 
 func New(C C) (*Client,os.Error) {
@@ -24,7 +24,15 @@ func New(C C) (*Client,os.Error) {
 	if e!=nil { return nil,e }
 
 	client := &Client{ssh: c}
-	for C.PasswordFun!=nil && !password(c,C.User, C.PasswordFun()) {}
+	for C.PasswordFun!=nil {
+		pass,err := C.PasswordFun()
+		if err!=nil {
+			return nil,err
+		}
+		if password(c,C.User, pass) {
+			break
+		}
+	}
 	startClientLoop(client)
 	return client, nil
 }
