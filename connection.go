@@ -149,7 +149,7 @@ func dopacket(c *Client, b []byte) {
 		x := c.chs[lcid]
 		x.err(data)
 		writePacket(c.ssh, func(p*bigendian.Printer) {
-			p.Byte(msgChannelWindowAdjust).U32(x.remote_id).U32(uint32(len(data)))
+			p.Byte(msgChannelWindowAdjust).U32(x.remote_id).U32(uint32(0))
 		})
 	case msgChannelOpenConfirmation:
 		var lcid, rcid, rwin, rmax uint32
