@@ -84,7 +84,7 @@ func readPacket(c *ssh) ([]byte, os.Error) {
 	lhash    := c.rh.Size()
 	lrest    := 4 + lfield + lhash - len(b)
 
-	if lrest > 128*1024 || lfield<0 {
+	if lrest > 12*1024*1024 || lfield<0 {
 		return nil, os.NewError("too large packet")
 	}
 
