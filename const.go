@@ -3,6 +3,7 @@ package ssh
 const (
 	ident = "SSH-2.0-gossh_0.0"
 
+	msgIgnore          = 2
 	msgServiceRequest  = 5
 	msgServiceAccept   = 6
 

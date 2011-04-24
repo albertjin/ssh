@@ -95,6 +95,8 @@ func dopacket(c *Client, b []byte) {
 	var code byte
 	
 	switch b[0] {
+	case msgIgnore:
+		Log(5, "Ignoring msgIgnore")
 	case msgChannelOpenFailure:
 		var cid, reason uint32
 		var desc, lang string
