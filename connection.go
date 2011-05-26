@@ -11,6 +11,7 @@ type Client struct {
 	cc  chan cmd
 	chs map[uint32]*Channel
 	lids uint32
+	efun func(os.Error)
 }
 
 type Channel struct {
@@ -41,8 +42,11 @@ func startClientLoop(c *Client) {
 	go func(){
 		for {
 			b,e := readPacket(c.ssh)
-			if e!=nil { panic(e) }
-			c.cc <- cmd{&Packet{b}, nil}
+			if e!=nil {
+				c.efun(e)
+			} else {
+				c.cc <- cmd{&Packet{b}, nil}
+			}
 		}
 	}()
 }
@@ -52,9 +56,6 @@ func cloop(c *Client) {
 		cmd :=<- c.cc
 		switch v := cmd.Command.(type) {
 		case *Spawn:
-			if v.Efun == nil {
-				v.Efun = func(e os.Error) { panic(e) }
-			}
 			if v.In == nil {
 				v.In = os.Stdin
 			}
@@ -70,7 +71,7 @@ func cloop(c *Client) {
 			ch := cmd.Channel
 			ch.local_id     = c.lids
 			ch.local_window = maxPacketData
-			ch.efun         = v.Efun
+			ch.efun         = c.efun
 			ch.out          = func(bs []byte) { v.Out.Write(bs) }
 			ch.err          = func(bs []byte) { v.Err.Write(bs) }
 			ch.onclose      = v.OnClose
@@ -218,7 +219,6 @@ type Spawn struct {
 	Cmd string
 	In io.ReadCloser
 	Out,Err io.WriteCloser
-	Efun func(os.Error)
 	NoTTY bool
 	OnClose func()
 }
