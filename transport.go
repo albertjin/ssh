@@ -5,35 +5,34 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/cipher"
+	"errors"
 	"hash"
 	"io"
 	"net"
-	"os"
 )
 
 type ssh struct {
-	c net.Conn
-	r *bufio.Reader
-	rc cipher.BlockMode
-	wc cipher.BlockMode
-	rh hash.Hash
-	wh hash.Hash
+	c          net.Conn
+	r          *bufio.Reader
+	rc         cipher.BlockMode
+	wc         cipher.BlockMode
+	rh         hash.Hash
+	wh         hash.Hash
 	rseq, wseq uint32
-	rident string
+	rident     string
 	ckex, skex []byte
 	session_id []byte
 }
 
-
-func connect(host string) (*ssh,os.Error) {
-	c,err := net.Dial("tcp", host+":22")
-	if err!=nil {
-		return nil,err
+func connect(host string) (*ssh, error) {
+	c, err := net.Dial("tcp", host+":22")
+	if err != nil {
+		return nil, err
 	}
 
-	_,err = c.Write([]byte(ident+"\r\n"))
-	if err!=nil {
-		return nil,err
+	_, err = c.Write([]byte(ident + "\r\n"))
+	if err != nil {
+		return nil, err
 	}
 
 	r := bufio.NewReader(c)
@@ -42,81 +41,81 @@ func connect(host string) (*ssh,os.Error) {
 	var prefix bool
 	for {
 		line, prefix, err = r.ReadLine()
-		if err!=nil {
-			return nil,err
+		if err != nil {
+			return nil, err
 		}
 		if prefix {
-			return nil,os.NewError("Too long identification line")
+			return nil, errors.New("Too long identification line")
 		}
-		Log(1,"%s",line)
+		Log(1, "%s", line)
 		if bytes.HasPrefix(line, []byte("SSH-2.0-")) {
-			break 
+			break
 		}
 		if bytes.HasPrefix(line, []byte("SSH-")) {
-			return nil,os.NewError("Unsupported ssh version")
+			return nil, errors.New("Unsupported ssh version")
 		}
 	}
 
 	return &ssh{c, r, NullCrypto{}, NullCrypto{}, NullHash{}, NullHash{}, 0, 0, string(line), nil, nil, nil}, nil
 }
 
-func readPacket(c *ssh) ([]byte, os.Error) {
+func readPacket(c *ssh) ([]byte, error) {
 	l := c.rc.BlockSize()
 	if l < 16 {
 		l = 16
 	}
-	
+
 	// read packet header
 	b := make([]byte, l)
 	_, err := io.ReadFull(c.r, b)
-	if err!=nil {
-		return nil,err
+	if err != nil {
+		return nil, err
 	}
-	
-	Log(9,"WIRE = %X",b)
-	// decrypt header
-	c.rc.CryptBlocks(b,b)
-	Log(9,"DEC  = %X",b)
 
-	lfield   := int(bigendian.U32(b))
+	Log(9, "WIRE = %X", b)
+	// decrypt header
+	c.rc.CryptBlocks(b, b)
+	Log(9, "DEC  = %X", b)
+
+	lfield := int(bigendian.U32(b))
 	lpadding := int(b[4])
 	// FIXME add checks here to validate packet
-	lhash    := c.rh.Size()
-	lrest    := 4 + lfield + lhash - len(b)
+	lhash := c.rh.Size()
+	lrest := 4 + lfield + lhash - len(b)
 
-	if lrest > 12*1024*1024 || lfield<0 {
+	if lrest > 12*1024*1024 || lfield < 0 {
 		Log(0, "lfield %d lrest %d", lfield, lrest)
-		return nil, os.NewError("too large packet")
+		return nil, errors.New("too large packet")
 	}
 
 	packet := make([]byte, len(b)+lrest)
 	copy(packet, b)
 	rest := packet[len(b):]
-	_,err = io.ReadFull(c.r,rest)
-	if err!=nil {
-		return nil,err
+	_, err = io.ReadFull(c.r, rest)
+	if err != nil {
+		return nil, err
 	}
 	c.rc.CryptBlocks(rest[0:lrest-lhash], rest[0:lrest-lhash])
-	
+
 	var rseqb [4]byte
 	bigendian.PutU32(rseqb[:], c.rseq)
 	c.rseq++
 
 	c.rh.Reset()
 	c.rh.Write(rseqb[:])
-	c.rh.Write(packet[0:len(packet)-lhash])
-	if !constEq(c.rh.Sum(), packet[len(packet)-lhash:]) {
-		return nil,os.NewError("Invalid mac")
+	c.rh.Write(packet[0 : len(packet)-lhash])
+	if !constEq(c.rh.Sum(nil), packet[len(packet)-lhash:]) {
+		return nil, errors.New("Invalid mac")
 	}
 
-	return packet[5:4+lfield-lpadding],nil
+	return packet[5 : 4+lfield-lpadding], nil
 }
 
 func writePacket(c *ssh, fun func(*bigendian.Printer)) {
 	p := bigendian.NewPrinterWith(make([]byte, 5, 32))
 	fun(p)
 	b := p.Out()
-	
+
 	bs := c.wc.BlockSize()
 	if bs < 16 {
 		bs = 16
@@ -138,9 +137,9 @@ func writePacket(c *ssh, fun func(*bigendian.Printer)) {
 	c.wh.Write(wseqb[:])
 	c.wh.Write(b)
 
-	c.wc.CryptBlocks(b,b)
+	c.wc.CryptBlocks(b, b)
 
-	b = append(b, c.wh.Sum()...)
+	b = append(b, c.wh.Sum(nil)...)
 
 	c.c.Write(b)
 }
@@ -163,7 +162,7 @@ type kexres struct {
 	Kex, Shk, EncCS, EncSC, MacCS, MacSC, ComCS, ComSC string
 }
 
-func parseKexInit(c *ssh, b []byte) (*kexres,os.Error) {
+func parseKexInit(c *ssh, b []byte) (*kexres, error) {
 	var cookie []byte
 	var kex, shk, ecs, esc, mcs, msc, ccs, csc, lcs, lsc string
 	var follows byte
@@ -180,57 +179,56 @@ func parseKexInit(c *ssh, b []byte) (*kexres,os.Error) {
 	guessed := true
 	var r kexres
 	var g bool
-	var err os.Error
+	var err error
 
-	r.Kex,g,err = namelistCheck(kexKex, kex)
-	if err!=nil {
-		return nil,err
-	}
-	guessed = g && guessed
-
-	r.Shk,g,err = namelistCheck(kexShk, shk)
-	if err!=nil {
-		return nil,err
+	r.Kex, g, err = namelistCheck(kexKex, kex)
+	if err != nil {
+		return nil, err
 	}
 	guessed = g && guessed
 
-	r.EncCS,g,err = namelistCheck(kexEnc, ecs)
-	if err!=nil {
-		return nil,err
-	}
-	guessed = g && guessed
-	r.EncSC,g,err = namelistCheck(kexEnc, esc)
-	if err!=nil {
-		return nil,err
+	r.Shk, g, err = namelistCheck(kexShk, shk)
+	if err != nil {
+		return nil, err
 	}
 	guessed = g && guessed
 
-	r.MacCS,g,err = namelistCheck(kexMac, mcs)
-	if err!=nil {
-		return nil,err
+	r.EncCS, g, err = namelistCheck(kexEnc, ecs)
+	if err != nil {
+		return nil, err
 	}
 	guessed = g && guessed
-	r.MacSC,g,err = namelistCheck(kexMac, msc)
-	if err!=nil {
-		return nil,err
-	}
-	guessed = g && guessed
-
-	r.ComCS,g,err = namelistCheck(kexCom, ccs)
-	if err!=nil {
-		return nil,err
-	}
-	guessed = g && guessed
-	r.ComSC,g,err = namelistCheck(kexCom, csc)
-	if err!=nil {
-		return nil,err
+	r.EncSC, g, err = namelistCheck(kexEnc, esc)
+	if err != nil {
+		return nil, err
 	}
 	guessed = g && guessed
 
-	if guessed==false && follows>0 {
+	r.MacCS, g, err = namelistCheck(kexMac, mcs)
+	if err != nil {
+		return nil, err
+	}
+	guessed = g && guessed
+	r.MacSC, g, err = namelistCheck(kexMac, msc)
+	if err != nil {
+		return nil, err
+	}
+	guessed = g && guessed
+
+	r.ComCS, g, err = namelistCheck(kexCom, ccs)
+	if err != nil {
+		return nil, err
+	}
+	guessed = g && guessed
+	r.ComSC, g, err = namelistCheck(kexCom, csc)
+	if err != nil {
+		return nil, err
+	}
+	guessed = g && guessed
+
+	if guessed == false && follows > 0 {
 		readPacket(c)
 	}
 
 	return &r, nil
 }
-
