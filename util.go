@@ -83,9 +83,10 @@ func (NullCrypto) CryptBlocks(dst, src []byte) { copy(dst, src) }
 type NullHash struct{}
 
 func (NullHash) Write(b []byte) (int, error) { return len(b), nil }
-func (NullHash) Sum() []byte                 { return []byte{} }
+func (NullHash) Sum(b []byte) []byte         { return []byte{} }
 func (NullHash) Reset()                      {}
 func (NullHash) Size() int                   { return 0 }
+func (NullHash) BlockSize() int              { return 0 }
 
 func constEq(a, b []byte) bool {
 	var equal = 1
