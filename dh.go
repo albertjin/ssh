@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bitbucket.org/taruti/bigendian"
 	"crypto"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -10,30 +9,30 @@ import (
 	"math/big"
 )
 
-func dh(c *ssh, k *kexres, C *C) error {
+func (c *ssh) dh(k *kexres, C *C) error {
 	switch k.Kex {
 	case "diffie-hellman-group1-sha1":
-		return dhWith(c, k, C, dh1_prime, dh1_gen)
+		return c.dhWith(k, C, dh1_prime, dh1_gen)
 	case "diffie-hellman-group14-sha1":
-		return dhWith(c, k, C, dh14_prime, dh14_gen)
+		return c.dhWith(k, C, dh14_prime, dh14_gen)
 	}
 	panic("Unknown kex method: " + k.Kex)
 }
 
-func dhWith(c *ssh, k *kexres, C *C, prime, gen *big.Int) error {
+func (c *ssh) dhWith(k *kexres, C *C, prime, gen *big.Int) error {
 	X, E := dhGenKey(gen, prime)
-	writePacket(c, func(p *bigendian.Printer) {
+	c.writePacket(func(p *Printer) {
 		p.Byte(msgKexdhInit).U32Bytes(bS(E))
 	})
 
-	b, e := readPacket(c)
+	b, e := c.readPacket()
 	if e != nil {
 		return e
 	}
 	var code byte
 	var H, K_S, Fs, sigh []byte
 
-	bigendian.NewParser(b).Byte(&code).U32Bytes(&K_S).U32Bytes(&Fs).U32Bytes(&sigh).End()
+	NewParser(b).Byte(&code).U32Bytes(&K_S).U32Bytes(&Fs).U32Bytes(&sigh).End()
 
 	err := C.HostKeyFun(K_S)
 	if err != nil {
@@ -42,7 +41,7 @@ func dhWith(c *ssh, k *kexres, C *C, prime, gen *big.Int) error {
 
 	F := pS(Fs)
 	K := big.NewInt(0).Exp(F, X, prime)
-	skP := bigendian.NewParser(K_S)
+	skP := NewParser(K_S)
 	var skAlgo string
 	skP.U32String(&skAlgo)
 	switch skAlgo {
@@ -50,13 +49,13 @@ func dhWith(c *ssh, k *kexres, C *C, prime, gen *big.Int) error {
 		var rsaes, rsans []byte
 		skP.U32Bytes(&rsaes).U32Bytes(&rsans)
 		skPub := &rsa.PublicKey{pS(rsans), int(pS(rsaes).Int64())}
-		H = calculateH(c, c.ckex, c.skex, K_S, bS(E), Fs, bS(K))
+		H = c.calculateH(K_S, bS(E), Fs, bS(K))
 		if c.session_id == nil {
 			c.session_id = H
 		}
 		var sigalgo string
 		var sigdata []byte
-		bigendian.NewParser(sigh).U32String(&sigalgo).U32Bytes(&sigdata).End()
+		NewParser(sigh).U32String(&sigalgo).U32Bytes(&sigdata).End()
 
 		err := rsa.VerifyPKCS1v15(skPub, crypto.SHA1, sha1H(H), sigdata)
 		if err != nil {
@@ -65,14 +64,14 @@ func dhWith(c *ssh, k *kexres, C *C, prime, gen *big.Int) error {
 	default:
 		panic(skAlgo)
 	}
-	writePacket(c, func(p *bigendian.Printer) { p.Byte(msgNewkeys) })
-	b, e = readPacket(c)
-	bigendian.NewParser(b).Byte(&code).End()
+	c.writePacket(func(p *Printer) { p.Byte(msgNewkeys) })
+	b, e = c.readPacket()
+	NewParser(b).Byte(&code).End()
 	if e != nil || code != msgNewkeys {
 		panic("Expected msgNewkeys")
 	}
 	hash := func(b byte) []byte {
-		return sha1H(bigendian.NewPrinter().U32Bytes(bS(K)).Bytes(H).Byte(b).Bytes(c.session_id).Out())
+		return sha1H(NewPrinter().U32Bytes(bS(K)).Bytes(H).Byte(b).Bytes(c.session_id).Out())
 	}
 	switch k.EncCS {
 	case "aes128-cbc":
@@ -91,9 +90,9 @@ func dhWith(c *ssh, k *kexres, C *C, prime, gen *big.Int) error {
 	return nil
 }
 
-func calculateH(c *ssh, ckex, skex, K_S, Es, Fs, Ks []byte) []byte {
-	shkp := bigendian.NewPrinter()
-	shkp.U32String(ident).U32String(c.rident).U32Bytes(ckex).U32Bytes(skex)
+func (c *ssh) calculateH(K_S, Es, Fs, Ks []byte) []byte {
+	shkp := NewPrinter()
+	shkp.U32String(ident).U32String(c.rident).U32Bytes(c.ckex).U32Bytes(c.skex)
 	shkp.U32Bytes(K_S).U32Bytes(Es).U32Bytes(Fs).U32Bytes(Ks)
 	return sha1H(shkp.Out())
 }

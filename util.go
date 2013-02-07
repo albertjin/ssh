@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bitbucket.org/taruti/bigendian"
 	"crypto/aes"
 	"crypto/cipher"
 	r "crypto/rand"
@@ -40,7 +39,7 @@ func namelistCheck(client, server string) (string, bool, error) {
 var rng = pr.New(pr.NewSource(crnd64()))
 
 func crnd64() int64 {
-	return int64(bigendian.U64(rand(8)))
+	return int64(bigendian.Uint64(rand(8)))
 }
 
 func min(a int, b int) int {

@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bitbucket.org/taruti/bigendian"
 	"errors"
 	"io"
 	"os"
@@ -35,14 +34,14 @@ const (
 	chsClosed     = 1 << iota
 )
 
-func startClientLoop(c *Client) {
+func (c *Client) startLoop() {
 	Log(6, "Starting client loop")
 	c.cc = make(chan cmd, 16)
 	c.chs = map[uint32]*Channel{}
-	go cloop(c)
+	go c.cloop()
 	go func() {
 		for {
-			b, e := readPacket(c.ssh)
+			b, e := c.ssh.readPacket()
 			if e != nil {
 				c.efun(e)
 			} else {
@@ -52,7 +51,7 @@ func startClientLoop(c *Client) {
 	}()
 }
 
-func cloop(c *Client) {
+func (c *Client) cloop() {
 	for {
 		cmd := <-c.cc
 		switch v := cmd.Command.(type) {
@@ -78,22 +77,22 @@ func cloop(c *Client) {
 			ch.onclose = v.OnClose
 			c.lids++
 			c.chs[ch.local_id] = ch
-			writePacket(c.ssh, func(p *bigendian.Printer) {
+			c.ssh.writePacket(func(p *Printer) {
 				p.Byte(msgChannelOpen).U32String("session").U32(ch.local_id).U32(ch.local_window).U32(maxPacketData)
 			})
 		case *input:
 			ch := cmd.Channel
 			ch.pending = append(ch.pending, v.Input...)
-			flushInput(ch)
+			ch.flushInput()
 		case *Packet:
-			dopacket(c, v.Payload)
+			c.dopacket(v.Payload)
 		default:
 			panic("INVALID VALUE in cloop")
 		}
 	}
 }
 
-func dopacket(c *Client, b []byte) {
+func (c *Client) dopacket(b []byte) {
 	var code byte
 
 	switch b[0] {
@@ -102,25 +101,25 @@ func dopacket(c *Client, b []byte) {
 	case msgChannelOpenFailure:
 		var cid, reason uint32
 		var desc, lang string
-		bigendian.NewParser(b).Byte(&code).U32(&cid).U32(&reason).U32String(&desc).U32String(&lang).End()
+		NewParser(b).Byte(&code).U32(&cid).U32(&reason).U32String(&desc).U32String(&lang).End()
 		x := c.chs[cid]
 		if x != nil {
 			x.efun(errors.New(desc))
 		}
 	case msgChannelWindowAdjust:
 		var lcid, wadj uint32
-		bigendian.NewParser(b).Byte(&code).U32(&lcid).U32(&wadj).End()
+		NewParser(b).Byte(&code).U32(&lcid).U32(&wadj).End()
 		x := c.chs[lcid]
 		x.remote_window += wadj
 	case msgChannelClose:
 		var lcid uint32
-		bigendian.NewParser(b).Byte(&code).U32(&lcid).End()
+		NewParser(b).Byte(&code).U32(&lcid).End()
 		x := c.chs[lcid]
 		delete(c.chs, lcid)
 		if x.state != chsClosed {
 			x.state = chsClosed
 			x.onclose()
-			writePacket(c.ssh, func(p *bigendian.Printer) {
+			c.ssh.writePacket(func(p *Printer) {
 				p.Byte(msgChannelClose).U32(x.remote_id)
 			})
 		}
@@ -132,30 +131,30 @@ func dopacket(c *Client, b []byte) {
 		Log(5, "Ignoring msgChannelSuccess")
 	case msgChannelFailure:
 		var lcid uint32
-		bigendian.NewParser(b).Byte(&code).U32(&lcid).End()
+		NewParser(b).Byte(&code).U32(&lcid).End()
 		x := c.chs[lcid]
 		x.efun(errors.New("Channel failure"))
 	case msgChannelData:
 		var lcid uint32
 		var data []byte
-		bigendian.NewParser(b).Byte(&code).U32(&lcid).U32Bytes(&data).End()
+		NewParser(b).Byte(&code).U32(&lcid).U32Bytes(&data).End()
 		x := c.chs[lcid]
 		x.out(data)
-		writePacket(c.ssh, func(p *bigendian.Printer) {
+		c.ssh.writePacket(func(p *Printer) {
 			p.Byte(msgChannelWindowAdjust).U32(x.remote_id).U32(0)
 		})
 	case msgChannelExtendedData:
 		var lcid, dtc uint32
 		var data []byte
-		bigendian.NewParser(b).Byte(&code).U32(&lcid).U32(&dtc).U32Bytes(&data).End()
+		NewParser(b).Byte(&code).U32(&lcid).U32(&dtc).U32Bytes(&data).End()
 		x := c.chs[lcid]
 		x.err(data)
-		writePacket(c.ssh, func(p *bigendian.Printer) {
+		c.ssh.writePacket(func(p *Printer) {
 			p.Byte(msgChannelWindowAdjust).U32(x.remote_id).U32(uint32(0))
 		})
 	case msgChannelOpenConfirmation:
 		var lcid, rcid, rwin, rmax uint32
-		bigendian.NewParser(b).Byte(&code).U32(&lcid).U32(&rcid).U32(&rwin).U32(&rmax).End()
+		NewParser(b).Byte(&code).U32(&lcid).U32(&rcid).U32(&rwin).U32(&rmax).End()
 		Log(6, "lcid %d, rcid %d, rwin %d, rmax %d\n", lcid, rcid, rwin, rmax)
 		x := c.chs[lcid]
 		x.remote_id = rcid
@@ -166,18 +165,18 @@ func dopacket(c *Client, b []byte) {
 		switch v := x.command.(type) {
 		case *Spawn:
 			if !v.NoTTY {
-				writePacket(c.ssh, func(p *bigendian.Printer) {
+				c.ssh.writePacket(func(p *Printer) {
 					p.Byte(msgChannelRequest).U32(x.remote_id).U32String("pty-req")
 					p.Byte(0).U32String(os.Getenv("TERM"))
 					p.U32(0).U32(0).U32(0).U32(0).U32String("")
 				})
 			}
 			if v.Cmd == "" {
-				writePacket(c.ssh, func(p *bigendian.Printer) {
+				c.ssh.writePacket(func(p *Printer) {
 					p.Byte(msgChannelRequest).U32(x.remote_id).U32String("shell").Byte(1)
 				})
 			} else {
-				writePacket(c.ssh, func(p *bigendian.Printer) {
+				c.ssh.writePacket(func(p *Printer) {
 					p.Byte(msgChannelRequest).U32(x.remote_id).U32String("exec").Byte(1).U32String(v.Cmd)
 				})
 			}
@@ -190,7 +189,7 @@ func dopacket(c *Client, b []byte) {
 	}
 }
 
-func flushInput(c *Channel) {
+func (c *Channel) flushInput() {
 	if c.state != chsReady {
 		return
 	}
@@ -198,7 +197,7 @@ func flushInput(c *Channel) {
 	if n == 0 {
 		return
 	}
-	writePacket(c.client.ssh, func(p *bigendian.Printer) {
+	c.client.ssh.writePacket(func(p *Printer) {
 		p.Byte(msgChannelData).U32(c.remote_id).U32Bytes(c.pending[0:n])
 	})
 	c.remote_window -= uint32(n)

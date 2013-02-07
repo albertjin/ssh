@@ -13,19 +13,19 @@ func New(C C) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	writeKexInit(c)
-	b, e := readPacket(c)
+	c.writeKexInit()
+	b, e := c.readPacket()
 	c.skex = make([]byte, len(b))
 	copy(c.skex, b)
 	if e != nil {
 		return nil, e
 	}
-	k, e := parseKexInit(c, b[1:])
+	k, e := c.parseKexInit(b[1:])
 	Log(6, "%v", k)
 	if e != nil {
 		return nil, e
 	}
-	e = dh(c, k, &C)
+	e = c.dh(k, &C)
 	if e != nil {
 		return nil, e
 	}
@@ -36,10 +36,10 @@ func New(C C) (*Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		if password(c, C.User, pass) {
+		if c.password(C.User, pass) {
 			break
 		}
 	}
-	startClientLoop(client)
+	client.startLoop()
 	return client, nil
 }

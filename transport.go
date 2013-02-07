@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bitbucket.org/taruti/bigendian"
 	"bufio"
 	"bytes"
 	"crypto/cipher"
@@ -59,7 +58,7 @@ func connect(host string) (*ssh, error) {
 	return &ssh{c, r, NullCrypto{}, NullCrypto{}, NullHash{}, NullHash{}, 0, 0, string(line), nil, nil, nil}, nil
 }
 
-func readPacket(c *ssh) ([]byte, error) {
+func (c *ssh) readPacket() ([]byte, error) {
 	l := c.rc.BlockSize()
 	if l < 16 {
 		l = 16
@@ -77,7 +76,7 @@ func readPacket(c *ssh) ([]byte, error) {
 	c.rc.CryptBlocks(b, b)
 	Log(9, "DEC  = %X", b)
 
-	lfield := int(bigendian.U32(b))
+	lfield := int(bigendian.Uint32(b))
 	lpadding := int(b[4])
 	// FIXME add checks here to validate packet
 	lhash := c.rh.Size()
@@ -98,7 +97,7 @@ func readPacket(c *ssh) ([]byte, error) {
 	c.rc.CryptBlocks(rest[0:lrest-lhash], rest[0:lrest-lhash])
 
 	var rseqb [4]byte
-	bigendian.PutU32(rseqb[:], c.rseq)
+	bigendian.PutUint32(rseqb[:], c.rseq)
 	c.rseq++
 
 	c.rh.Reset()
@@ -111,8 +110,8 @@ func readPacket(c *ssh) ([]byte, error) {
 	return packet[5 : 4+lfield-lpadding], nil
 }
 
-func writePacket(c *ssh, fun func(*bigendian.Printer)) {
-	p := bigendian.NewPrinterWith(make([]byte, 5, 32))
+func (c *ssh) writePacket(fun func(*Printer)) {
+	p := NewPrinterWith(make([]byte, 5, 32))
 	fun(p)
 	b := p.Out()
 
@@ -128,10 +127,10 @@ func writePacket(c *ssh, fun func(*bigendian.Printer)) {
 
 	b[4] = byte(padding)
 	b = append(b, rand(padding)...)
-	bigendian.PutU32(b, uint32(len(b)-4))
+	bigendian.PutUint32(b, uint32(len(b)-4))
 
 	var wseqb [4]byte
-	bigendian.PutU32(wseqb[:], c.wseq)
+	bigendian.PutUint32(wseqb[:], c.wseq)
 	c.wseq++
 	c.wh.Reset()
 	c.wh.Write(wseqb[:])
@@ -144,8 +143,8 @@ func writePacket(c *ssh, fun func(*bigendian.Printer)) {
 	c.c.Write(b)
 }
 
-func writeKexInit(c *ssh) {
-	p := bigendian.NewPrinter()
+func (c *ssh) writeKexInit() {
+	p := NewPrinter()
 	p.Byte(msgKexInit).Bytes(rand(16))
 	p.U32String(kexKex).U32String(kexShk)
 	p.U32String(kexEnc).U32String(kexEnc)
@@ -155,20 +154,20 @@ func writeKexInit(c *ssh) {
 	p.Byte(0).U32(0)
 	c.ckex = p.Out()
 
-	writePacket(c, func(p *bigendian.Printer) { p.Bytes(c.ckex) })
+	c.writePacket(func(p *Printer) { p.Bytes(c.ckex) })
 }
 
 type kexres struct {
 	Kex, Shk, EncCS, EncSC, MacCS, MacSC, ComCS, ComSC string
 }
 
-func parseKexInit(c *ssh, b []byte) (*kexres, error) {
+func (c *ssh) parseKexInit(b []byte) (*kexres, error) {
 	var cookie []byte
 	var kex, shk, ecs, esc, mcs, msc, ccs, csc, lcs, lsc string
 	var follows byte
 	var reserved uint32
 
-	p := bigendian.NewParser(b).NBytes(16, &cookie)
+	p := NewParser(b).NBytes(16, &cookie)
 	p.U32String(&kex).U32String(&shk)
 	p.U32String(&ecs).U32String(&esc)
 	p.U32String(&mcs).U32String(&msc)
@@ -227,7 +226,7 @@ func parseKexInit(c *ssh, b []byte) (*kexres, error) {
 	guessed = g && guessed
 
 	if guessed == false && follows > 0 {
-		readPacket(c)
+		c.readPacket()
 	}
 
 	return &r, nil
