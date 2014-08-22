@@ -1,45 +1,81 @@
 package ssh
 
-type C struct {
-	User        string
-	Host        string
-	HostKeyFun  func([]byte) error
-	PasswordFun func() (string, error)
-	ErrorFun    func(error)
+import (
+    "errors"
+    "io"
+    "sync"
+)
+
+type ClientOption struct {
+	User string
+	CheckHostKey func([]byte) error
+	GetPassword func() (string, error)
 }
 
-func New(C C) (*Client, error) {
-	c, e := connect(C.Host)
-	if e != nil {
-		return nil, e
-	}
-	c.writeKexInit()
-	b, e := c.readPacket()
-	c.skex = make([]byte, len(b))
-	copy(c.skex, b)
-	if e != nil {
-		return nil, e
-	}
-	k, e := c.parseKexInit(b[1:])
-	Log(6, "%v", k)
-	if e != nil {
-		return nil, e
-	}
-	e = c.dh(k, &C)
-	if e != nil {
-		return nil, e
+type Client struct {
+	ClientChannels
+	*transport
+
+	actions chan func()
+
+	wait sync.WaitGroup
+	reading bool
+}
+
+func NewClient(conn io.ReadWriteCloser, option *ClientOption) (*Client, error) {
+
+	s, err := newTransport(conn)
+	if err != nil {
+		return nil, err
 	}
 
-	client := &Client{ssh: c, efun: C.ErrorFun}
-	for C.PasswordFun != nil {
-		pass, err := C.PasswordFun()
-		if err != nil {
-			return nil, err
-		}
-		if c.password(C.User, pass) {
-			break
-		}
-	}
+	client := &Client{transport: s}
 	client.startLoop()
+
+	done := make(chan int, 1)
+	ok := false
+
+	client.do(func() {
+        defer func() {
+            done<- 0
+        }()
+
+        Log(20, "a")
+        s.writeKexInit()
+
+        b := <-client.packets
+
+        k, err := s.parseKexinit(b)
+        Log(20, "%v", k)
+        if err != nil {
+            return
+        }
+
+        err = s.dh(k, option.CheckHostKey)
+        if err != nil {
+            return
+        }
+
+        for option.GetPassword != nil {
+            password, err := option.GetPassword()
+            if err != nil {
+                return
+            }
+            if client.auth(option.User, password) {
+                break
+            }
+        }
+        Log(20, "b")
+        ok = true
+    })
+    <-done
+    if !ok {
+        return nil, errors.New("failed")
+    }
 	return client, nil
+}
+
+func (c *Client) Close() {
+	c.do(nil)
+	c.wait.Wait()
 }

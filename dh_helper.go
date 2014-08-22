@@ -2,40 +2,40 @@ package ssh
 
 import "math/big"
 
-func dhGenKey(G, P *big.Int) (*big.Int, *big.Int) {
-	X := big.NewInt(0).Rand(rng, P) // is it ok to use P instead of Q, FIXME
-	E := big.NewInt(0).Exp(G, X, P)
-	return X, E
+func dhGenKey(g, p *big.Int) (x, e *big.Int) {
+    x = big.NewInt(0).Rand(rng, p)
+    e = big.NewInt(0).Exp(g, x, p)
+    return
 }
 
 func bS(x *big.Int) []byte {
-	bs := x.Bytes()
-	if len(bs) == 0 || bs[0] < 0x80 {
-		return bs
-	}
-	n := make([]byte, len(bs)+1)
-	copy(n[1:], bs)
-	return n
+    bs := x.Bytes()
+    if len(bs) == 0 || bs[0] < 0x80 {
+        return bs
+    }
+    data := make([]byte, len(bs)+1)
+    copy(data[1:], bs)
+    return data
 }
 
 func pS(b []byte) *big.Int {
-	r := big.NewInt(0)
-	if len(b) > 0 {
-		if b[0] == 0 {
-			b = b[1:]
-		}
-		r = r.SetBytes(b)
-	}
-	return r
+    r := big.NewInt(0)
+    if len(b) > 0 {
+        if b[0] == 0 {
+            b = b[1:]
+        }
+        r = r.SetBytes(b)
+    }
+    return r
 }
 
 /*
 6.2 Second Oakley Group
 
    IKE implementations SHOULD support a MODP group with the following
-prime and generator. This group is assigned id 2 (two).
+   prime and generator. This group is assigned id 2 (two).
 
-	The prime is 2^1024 - 2^960 - 1 + 2^64 * { [2^894 pi] + 129093 }.
+   The prime is 2^1024 - 2^960 - 1 + 2^64 * { [2^894 pi] + 129093 }.
    Its hexadecimal value is
 
          FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -52,11 +52,11 @@ var dh1_gen = big.NewInt(2)
 var dh1_prime, _ = big.NewInt(0).SetString("0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381FFFFFFFFFFFFFFFF", 0)
 
 /*
-3.  2048-bit MODP Group
+3. 2048-bit MODP Group
 
    This group is assigned id 14.
 
-	This prime is: 2^2048 - 2^1984 - 1 + 2^64 * { [2^1918 pi] + 124476 }
+   This prime is: 2^2048 - 2^1984 - 1 + 2^64 * { [2^1918 pi] + 124476 }
 
 Its hexadecimal value is:
 
